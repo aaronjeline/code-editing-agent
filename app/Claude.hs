@@ -20,47 +20,45 @@ import Data.ByteString.Char8 (pack)
 import qualified Req
 import qualified Resp
 import Control.Monad.Reader
+import Tools (ToolDef(..))
 
+-- This is our Claude monad, which can read from the agent dat structure 
+-- and do IO
 newtype Claude a = Claude (ReaderT Agent IO a) 
     deriving (Functor, Applicative, Monad, MonadReader Agent, MonadIO, MonadFail)
 
 data Agent = Agent 
     { apiKey :: ByteString 
-    , tools :: [Req.ToolDef] 
+    , tools :: [ToolDef] 
     }
 
 class (MonadFail m, MonadIO m, MonadReader Agent m) => MonadClaude m where
-    getKey :: m ByteString
-    getTools :: m [Req.ToolDef]
 
 instance MonadClaude Claude where
-    getKey = Claude (asks apiKey)
-    getTools = Claude (asks tools)
 
-runClaude :: [Req.ToolDef] -> Claude a -> IO a
+runClaude :: [ToolDef] -> Claude a -> IO a
 runClaude tools (Claude a) = do
     c <- build tools
     runReaderT a c
 
-build :: [Req.ToolDef] -> IO Agent
+build :: [ToolDef] -> IO Agent
 build tools = do
     Just apiKey <- (pack <$>) <$> lookupEnv "ANTHROPIC_API_KEY"
     return Agent { apiKey, tools }
 
 invoke :: MonadClaude m => [Req.Message] -> m Req.Message
 invoke messages = do
-    tools <- getTools
+    Agent { apiKey, tools } <- ask
     let request = Req.fromMessages messages tools
     let asJson = encode $ toJSON request
     liftIO $ L.writeFile "request.json" asJson
-    k <- getKey
     body <- runReq defaultHttpConfig $ do
         response <- req 
             POST
             (https "api.anthropic.com" /: "v1" /: "messages")
             (ReqBodyJson request)
             jsonResponse 
-            (headers k)
+            (headers apiKey)
         pure (responseBody response :: Resp.Resp)
     case Resp.response body of
         Resp.Text t ->  return (Req.assistant t) -- Claude's turn ends
@@ -77,16 +75,16 @@ useTool Resp.ToolUse { Resp.name, Resp.input } = do
     tool <- findTool name
     let msg = "Tool " <> show name <> "(" <> show input <> ")"
     liftIO $ putStrLn msg
-    liftIO $ Req.function tool input
+    liftIO $ function tool input
 
-findTool :: (MonadClaude m) => Text -> m Req.ToolDef
+findTool :: (MonadClaude m) => Text -> m ToolDef
 findTool toolName = do
-    tools <- getTools
-    find tools
+    t <- asks tools
+    find t
     where
         find [] = fail ""
         find (tool:tools)
-            | Req.name tool == toolName = return tool
+            | name tool == toolName = return tool
             | otherwise = find tools
 
 headers :: ByteString -> Option a

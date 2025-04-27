@@ -1,38 +1,28 @@
+{-
+ -  Module containing data structures pertaining to requests to the Claude API
+-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-module Req where
-import Data.Text (Text, intercalate)
+module Req 
+    (Req
+    , fromMessages
+    , Message(..)
+    , user
+    , assistant 
+    , toolUse
+    , toolResult
+    ) where
+import Data.Text (Text)
 import qualified Data.Text as T
 import GHC.Generics (Generic)
 import Data.Aeson
 import qualified Content as C
 import qualified Resp
+import Tools (ToolDef)
 
-data ToolDef = ToolDef
-    { name :: Text 
-    , description :: Text 
-    , input_schema :: Value
-    , function :: Value -> IO (Either Text Text)
-    } deriving (Generic)
-
-
-instance Show ToolDef where
-    show ToolDef {name, description, input_schema } = 
-        "ToolDef { " <> items <> " }"
-        where 
-            items = T.unpack $ intercalate ", " [name,description, show' input_schema]
-show' :: Show a => a -> Text 
-show' = T.pack . show
-
-instance ToJSON ToolDef where
- toJSON (ToolDef name description input_schema _) =
-        object
-            [ "name" .= name
-            , "description" .= description
-            , "input_schema" .= input_schema
-            ]
-
+{- 
+ - Requests to the Claude API
+ -}
 data Req = Req
     { model :: Text
     , max_tokens :: Int
@@ -40,28 +30,40 @@ data Req = Req
     , tools :: [ToolDef]
     } deriving (Show,Generic)
 
+instance ToJSON Req
+
+-- Construct a request from a list of messsages and tools, 
+-- selecting default values for the other fields
 fromMessages :: [Message] -> [ToolDef] -> Req
 fromMessages = Req "claude-3-7-sonnet-20250219" 1024 . reverse
 
-instance ToJSON Req
 
+-- A Message in the API. 
 data Message = Message 
     { role :: Text 
     , content :: C.Content
-    } deriving (Show,Generic)
+    } deriving (Generic)
 
-
-user :: Text -> Message
-user = Message "user" . C.Text
-
-toolResult :: Bool -> Text -> Text -> Message 
-toolResult err toolId msg =  Message "user"  (C.toolResult toolId err msg)
-
-toolUse :: Resp.ToolUse -> Message
-toolUse tu = Message "assistant" (C.ToolUse tu)
-
-assistant :: Text -> Message
-assistant = Message "assistant" . C.Text
+instance Show Message where
+    show (Message { role, content }) = 
+        T.unpack role <> ": " <> show content
 
 instance ToJSON Message where
     toJSON = genericToJSON defaultOptions { omitNothingFields = True }
+
+-- Construct a text message from the user
+user :: Text -> Message
+user = Message "user" . C.Text
+
+-- Construct a message from the assistant attempting to invoke a tool
+toolUse :: Resp.ToolUse -> Message
+toolUse tu = Message "assistant" (C.ToolUse tu)
+
+-- Construct a message form the user showing the result of a tool
+toolResult :: Bool -> Text -> Text -> Message 
+toolResult err toolId msg =  Message "user"  (C.toolResult toolId err msg)
+
+-- Construct a text message from the assistant
+assistant :: Text -> Message
+assistant = Message "assistant" . C.Text
+

@@ -1,7 +1,10 @@
+{-
+ -  Module containing data structures pertaining to tools in the Claude API
+-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NamedFieldPuns #-}
-module Tools (tools) where
+module Tools (tools, ToolDef(..)) where
 import Data.Aeson
 import Prelude hiding (readFile)
 import System.Directory
@@ -10,16 +13,44 @@ import Control.Exception
 import qualified Data.Text.IO as TIO
 import GHC.Generics (Generic)
 import System.IO.Error
-import Req (ToolDef(..))
 import Control.Monad.IO.Class
 
 
+-- All of the tools we support
 tools :: [ToolDef]
 tools = 
     [ readFile
     , listFiles
     , editFile
     ]
+
+-- The definition of a tool
+-- Name, description, and schema are all presented to the LLM 
+-- function is an IO action invoked when the model wants to call the tool
+data ToolDef = ToolDef
+    { name :: Text 
+    , description :: Text 
+    , input_schema :: Value -- A JSON Schema that describes what values we expect
+    , function :: Value -> IO (Either Text Text)
+    } deriving (Generic)
+
+instance Show ToolDef where
+    show ToolDef {name, description, input_schema } = 
+        "ToolDef { " <> items <> " }"
+        where 
+            items = unpack $ intercalate ", " [name,description, show' input_schema]
+            show' = pack . show
+
+-- Serialize TooLDef's by skipping function
+instance ToJSON ToolDef where
+ toJSON (ToolDef name description input_schema _) =
+        object
+            [ "name" .= name
+            , "description" .= description
+            , "input_schema" .= input_schema
+            ]
+
+-- Below are our tool defintions
 
 -- Tool for reading files
 
@@ -145,8 +176,15 @@ editFileFunction v =
     let parsed = fromJSON v :: Result EditFileInput in
     case parsed of
         Success EFI { file, old_str, new_str } -> do
-            contents <- TIO.readFile (unpack file)
-            let updated = replace old_str new_str contents
-            TIO.writeFile (unpack file) updated
-            pure $ Right "file updated"
+            fileExists <- doesFileExist (unpack file)
+            if fileExists
+                then do
+                    contents <- TIO.readFile (unpack file)
+                    let updated = replace old_str new_str contents
+                    TIO.writeFile (unpack file) updated
+                    pure $ Right "file updated"
+                else do
+                    -- If file doesn't exist, create a new empty file with the new_str
+                    TIO.writeFile (unpack file) new_str
+                    pure $ Right "new file created"
         _ -> return $ Left "failed to parse input"
