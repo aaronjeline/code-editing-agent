@@ -8,10 +8,11 @@ import GHC.Generics (Generic)
 import qualified Data.Vector as V
 import qualified Resp
 
+-- "Content" blocks in the Claude API
 data Content 
     = Text Text
-    | ToolResult ToolResult
-    | ToolUse Resp.ToolUse
+    | ToolResult ToolResult 
+    | ToolUse Resp.ToolUse -- The conversation we present to Claude has to contain the tool invocation
     deriving (Generic)
 
 instance Show Content where
@@ -19,6 +20,7 @@ instance Show Content where
     show (ToolResult r) = show $ toJSON r
     show (ToolUse use) = show $ toJSON use
 
+-- Builds a content block containing the result of a tool
 toolResult :: Text -> Bool -> Text -> Content
 toolResult tool_use_id is_error content = 
     ToolResult (TR 
@@ -27,6 +29,7 @@ toolResult tool_use_id is_error content =
         , content
         })
 
+-- Builds a content block containing a tool invocation
 toolUse :: Text -> Text -> Value -> Content
 toolUse id name input = ToolUse (Resp.ToolUse { Resp.id, Resp.name, Resp.input })
 
